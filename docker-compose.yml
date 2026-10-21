@@ -1,0 +1,23 @@
+# Opcional: si mas adelante instalas Docker, esto levanta PostgreSQL en un comando.
+#   docker compose up -d
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: caramelo-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: caramelo
+      POSTGRES_PASSWORD: caramelo
+      POSTGRES_DB: caramelo
+    ports:
+      - "5432:5432"
+    volumes:
+      - caramelo-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U caramelo -d caramelo"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  caramelo-data:

@@ -1,0 +1,22 @@
+{
+  "name": "caramelo-inventario",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Sistema de gestion de inventario y ventas para local de ropa",
+  "packageManager": "pnpm@11.20.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter @caramelo/api --filter @caramelo/web dev",
+    "dev:api": "pnpm --filter @caramelo/api dev",
+    "dev:web": "pnpm --filter @caramelo/web dev",
+    "build": "pnpm --filter @caramelo/web build",
+    "typecheck": "pnpm -r typecheck",
+    "db:generate": "pnpm --filter @caramelo/api db:generate",
+    "db:migrate": "pnpm --filter @caramelo/api db:migrate",
+    "db:push": "pnpm --filter @caramelo/api db:push",
+    "db:seed": "pnpm --filter @caramelo/api db:seed",
+    "db:studio": "pnpm --filter @caramelo/api db:studio"
+  }
+}
