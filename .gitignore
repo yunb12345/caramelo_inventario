@@ -12,3 +12,4 @@ Thumbs.db
 coverage/
 *.tsbuildinfo
 apps/api/drizzle/meta/_journal.json.bak
+backups/

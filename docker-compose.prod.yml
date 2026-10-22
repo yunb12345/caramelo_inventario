@@ -1,0 +1,119 @@
+# Produccion "de una sola maquina" (paridad local o plan B de VPS).
+#
+# Uso:
+#   1. cp .env.prod.example .env   y completar los valores
+#   2. docker compose -f docker-compose.prod.yml --profile tools run --rm migrate
+#   3. docker compose -f docker-compose.prod.yml up -d --build
+#   4. (una sola vez) docker compose -f docker-compose.prod.yml --profile tools run --rm seed
+#
+# En Render + Supabase este archivo NO se usa: ahi la API corre con
+# apps/api/Dockerfile y el frontend es un static site.
+
+name: caramelo
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-caramelo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?falta POSTGRES_PASSWORD en .env}
+      POSTGRES_DB: ${POSTGRES_DB:-caramelo}
+    volumes:
+      - caramelo-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-caramelo} -d ${POSTGRES_DB:-caramelo}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3001
+      DATABASE_URL: postgresql://${POSTGRES_USER:-caramelo}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-caramelo}
+      JWT_SECRET: ${JWT_SECRET:?falta JWT_SECRET en .env}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-12h}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8080}
+      ADMIN_NAME: ${ADMIN_NAME:-Administrador}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@caramelo.local}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?falta ADMIN_PASSWORD en .env}
+      SEED_DEMO: ${SEED_DEMO:-false}
+    expose:
+      - "3001"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3001/api/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        # Vacio = mismo origen; nginx proxya /api hacia el servicio api.
+        VITE_API_BASE_URL: ""
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_started
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+  # Herramientas de un solo uso (no arrancan con `up`).
+  # Usan la etapa de build, que si tiene drizzle-kit (devDependency).
+  migrate:
+    profiles: ["tools"]
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: build
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-caramelo}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-caramelo}
+    command: pnpm --filter @caramelo/api db:migrate
+
+  seed:
+    profiles: ["tools"]
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: build
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-caramelo}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-caramelo}
+      SEED_DEMO: ${SEED_DEMO:-false}
+      ADMIN_NAME: ${ADMIN_NAME:-Administrador}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@caramelo.local}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?falta ADMIN_PASSWORD en .env}
+      JWT_SECRET: ${JWT_SECRET:?falta JWT_SECRET en .env}
+    command: pnpm --filter @caramelo/api db:seed
+
+volumes:
+  caramelo-data:

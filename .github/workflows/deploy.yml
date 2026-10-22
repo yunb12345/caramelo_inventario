@@ -1,0 +1,92 @@
+name: Deploy
+
+# Typecheck + build, migraciones y despues deploy en Render.
+# Los servicios de Render tienen autoDeployTrigger: off, asi que este workflow
+# es el unico camino a produccion (evita migrar y deployar en paralelo).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Typecheck y build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+
+      - name: Instalar dependencias
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build (API + web)
+        run: pnpm build:all
+
+  publish:
+    name: Migraciones y deploy
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+
+      - name: Instalar dependencias
+        run: pnpm install --frozen-lockfile
+
+      - name: Verificar secreto
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "Falta el secreto DATABASE_URL (Settings -> Secrets and variables -> Actions)." >&2
+            exit 1
+          fi
+
+      - name: Aplicar migraciones
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: pnpm db:migrate
+
+      - name: Deploy API
+        env:
+          HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_API }}
+        run: |
+          if [ -z "$HOOK" ]; then
+            echo "Falta el secreto RENDER_DEPLOY_HOOK_API." >&2
+            exit 1
+          fi
+          curl -fsS -X POST "$HOOK"
+
+      - name: Deploy web
+        env:
+          HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_WEB }}
+        run: |
+          if [ -z "$HOOK" ]; then
+            echo "Falta el secreto RENDER_DEPLOY_HOOK_WEB." >&2
+            exit 1
+          fi
+          curl -fsS -X POST "$HOOK"

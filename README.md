@@ -21,11 +21,17 @@ caramelo_inventario/
 │   ├── api/            API REST (Fastify + Drizzle)
 │   │   ├── src/routes/         auth, products, sales, movements, dashboard...
 │   │   ├── src/db/schema.ts    esquema de la base
-│   │   └── drizzle/            migraciones SQL generadas
+│   │   ├── drizzle/            migraciones SQL generadas
+│   │   └── Dockerfile          imagen de produccion (build con esbuild)
 │   └── web/            SPA React
-│       └── src/pages/          Dashboard, POS, Productos, Ventas, Movimientos...
-└── packages/
-    └── shared/         esquemas Zod y tipos DTO compartidos
+│       ├── src/pages/          Dashboard, POS, Productos, Ventas, Movimientos...
+│       └── Dockerfile          build + nginx (Docker local o VPS)
+├── packages/
+│   └── shared/         esquemas Zod y tipos DTO compartidos
+├── scripts/            backup y restore de PostgreSQL
+├── .github/workflows/  CI, deploy, seed y backup programado
+├── docker-compose.prod.yml
+└── render.yaml         blueprint de Render
 ```
 
 ## Requisitos
@@ -69,12 +75,17 @@ Por defecto: `admin@caramelo.local` / `caramelo123`.
 | `pnpm dev:api` | Solo API con recarga en caliente |
 | `pnpm dev:web` | Solo frontend |
 | `pnpm build` | Build de produccion del frontend |
+| `pnpm build:api` | Compila la API a `apps/api/dist` (esbuild) |
+| `pnpm build:all` | Build de API + frontend (lo que corre el CI) |
+| `pnpm start:api` | Arranca la API compilada (`node dist/index.js`) |
 | `pnpm typecheck` | Chequeo de tipos en todo el monorepo |
 | `pnpm db:generate` | Genera una migracion a partir de cambios en el schema |
 | `pnpm db:migrate` | Aplica migraciones pendientes |
 | `pnpm db:push` | Sincroniza el schema sin migracion (solo desarrollo) |
 | `pnpm db:seed` | Carga usuario admin y datos demo |
 | `pnpm db:studio` | Abre Drizzle Studio |
+| `pnpm backup` | `pg_dump` de `DATABASE_URL` en `backups/` |
+| `pnpm restore` | Restaura un `.dump` (pide confirmacion) |
 
 ## Usar Supabase
 
@@ -106,6 +117,110 @@ Notas:
 - El seed crea el usuario usando `ADMIN_EMAIL` y `ADMIN_PASSWORD` del `.env`.
 - La API se conecta con un rol de base de datos, no con la API REST de Supabase: **RLS no interviene**. La seguridad la resuelve el JWT de la aplicacion.
 - Los proyectos gratuitos de Supabase se pausan por inactividad; se reactivan desde el panel.
+
+## Deploy en produccion (Render + Supabase)
+
+Arquitectura: Postgres en Supabase (`us-east-1`), API en Render (`virginia`, imagen Docker) y SPA como static site de Render. Las migraciones y los deploys los orquesta GitHub Actions.
+
+```
+GitHub Actions (push a main)
+  ├─ pnpm typecheck + build
+  ├─ pnpm db:migrate  ─────────────► Supabase
+  └─ POST deploy hooks ────────────► Render (API) + Render (Web)
+```
+
+> La region importa: Render no tiene Sudamerica. Emparejar Supabase `us-east-1` con Render `virginia` evita ~120 ms por query.
+
+### 1. Base de datos
+
+1. Crear el proyecto en Supabase con region `us-east-1`.
+2. Copiar la cadena **Session pooler** (puerto `5432`) y agregarle `?sslmode=require`.
+   No usar el *Transaction pooler* (`6543`): las ventas usan transacciones SQL.
+
+### 2. Secretos en GitHub
+
+Settings → Secrets and variables → Actions:
+
+| Secreto | De donde sale |
+| --- | --- |
+| `DATABASE_URL` | Supabase, Session pooler |
+| `JWT_SECRET` | `node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"` |
+| `ADMIN_EMAIL` | email del administrador |
+| `ADMIN_PASSWORD` | la clave real del administrador |
+| `RENDER_DEPLOY_HOOK_API` | Render → servicio API → Settings → Deploy Hook |
+| `RENDER_DEPLOY_HOOK_WEB` | Render → static site → Settings → Deploy Hook |
+
+### 3. Servicios en Render
+
+Render → **New → Blueprint** → elegir el repo. Toma `render.yaml` y crea:
+
+- `caramelo-api`: Docker (`apps/api/Dockerfile`), `healthCheckPath: /api/health`.
+- `caramelo-web`: static site, rewrite `/* → /index.html` para React Router.
+
+Al aplicar el blueprint completa los valores `sync: false`:
+
+| Servicio | Variable | Valor |
+| --- | --- | --- |
+| API | `DATABASE_URL` | Session pooler de Supabase |
+| API | `JWT_SECRET` | secreto largo |
+| API | `CORS_ORIGIN` | `https://caramelo-web.onrender.com` |
+| API | `ADMIN_EMAIL`, `ADMIN_PASSWORD` | credenciales del admin |
+| Web | `VITE_API_BASE_URL` | `https://caramelo-api.onrender.com` (sin `/api`) |
+
+`VITE_API_BASE_URL` se congela en el build: si cambia el dominio de la API hay que redeployar el frontend.
+
+Los servicios tienen `autoDeployTrigger: off` a proposito. El deploy lo dispara el workflow después de migrar; si además Render deployara solo, migraciones y deploy podrían correr en paralelo.
+
+### 4. Primer alta del administrador
+
+El seed **no** corre en cada deploy (si el usuario ya existe, no lo toca). Se ejecuta una sola vez:
+
+- Desde GitHub: **Actions → Seed administrador → Run workflow** (deja `demo` en falso para crear solo el admin).
+- O desde una máquina con acceso a la base:
+
+  ```bash
+  # apps/api/.env con DATABASE_URL de produccion, NODE_ENV=production
+  pnpm db:seed
+  ```
+
+`SEED_DEMO=false` (o `NODE_ENV=production`) crea solo el administrador, sin catálogo ni ventas de ejemplo.
+
+### 5. Deploys siguientes
+
+```bash
+git push origin main
+```
+
+CI corre typecheck y build en cada pull request. Al mergear en `main`, el workflow de Deploy repite la validación, aplica las migraciones y recién ahí dispara los hooks de Render. Si algo falla antes, no se deploya.
+
+### 6. Backups
+
+```bash
+DATABASE_URL="postgresql://..." pnpm backup    # backups/caramelo-<fecha>.dump
+DATABASE_URL="postgresql://..." pnpm run restore backups/caramelo-<fecha>.dump
+```
+
+El workflow `Backup base de datos` corre todos los días a las 03:00 UTC y deja el dump como artifact por 30 días. **Los proyectos gratuitos de Supabase no tienen backups automáticos.**
+
+### Alternativa: una sola maquina con Docker
+
+Para VPS o para probar producción local:
+
+```bash
+cp .env.prod.example .env      # completar valores
+docker compose -f docker-compose.prod.yml --profile tools run --rm migrate
+docker compose -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml --profile tools run --rm seed
+```
+
+Queda nginx en `http://localhost:8080` sirviendo la SPA y proxyando `/api` al contenedor `api`.
+
+### Notas de produccion
+
+- La API se compila con esbuild a un único `dist/index.js` (`pnpm build:api`). El bundle inlinea `@caramelo/shared`, así que en producción no hacen falta `tsx` ni el código TypeScript.
+- `PORT` lo inyecta Render; no lo definas en `render.yaml`.
+- No hay endpoint de cambio de contraseña: si se pierde `ADMIN_PASSWORD`, hay que rehashear a mano en la base.
+- El plan free de Render duerme a los 15 minutos (cold start de ~50 s en el POS). Para uso diario, `0.5c-512mb`.
 
 ## Modelo de datos
 

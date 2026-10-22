@@ -12,6 +12,11 @@ const envSchema = z.object({
   ADMIN_NAME: z.string().default("Administrador"),
   ADMIN_EMAIL: z.email().default("admin@caramelo.local"),
   ADMIN_PASSWORD: z.string().min(6).default("caramelo123"),
+  /**
+   * Solo lo usa el seed. Si no se define, la demo se carga unicamente fuera de
+   * produccion; en produccion solo se crea el usuario administrador.
+   */
+  SEED_DEMO: z.enum(["true", "false"]).optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);

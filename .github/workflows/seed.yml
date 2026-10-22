@@ -1,0 +1,46 @@
+name: Seed administrador
+
+# Alta manual del usuario administrador en produccion (y opcionalmente del
+# catalogo demo). Se corre a mano desde Actions -> Seed administrador -> Run workflow.
+#
+# El seed es idempotente: si el usuario ya existe no lo modifica, asi que
+# cambiar ADMIN_PASSWORD despues no tiene efecto sobre un usuario ya creado.
+
+on:
+  workflow_dispatch:
+    inputs:
+      demo:
+        description: "Cargar tambien el catalogo y las ventas de ejemplo"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  seed:
+    name: pnpm db:seed
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+
+      - name: Instalar dependencias
+        run: pnpm install --frozen-lockfile
+
+      - name: Sembrar base
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          ADMIN_NAME: Administrador
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          SEED_DEMO: ${{ inputs.demo && 'true' || 'false' }}
+        run: pnpm db:seed

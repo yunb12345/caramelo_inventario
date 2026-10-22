@@ -1,0 +1,3 @@
+# Fallback para SPA en hosts que soportan _redirects (Netlify, Cloudflare Pages).
+# En Render esto se configura con `routes` en render.yaml; en nginx con try_files.
+/*  /index.html  200

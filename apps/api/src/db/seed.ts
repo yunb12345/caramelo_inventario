@@ -279,13 +279,25 @@ async function main() {
   console.log("\nSembrando base de datos de Caramelo...\n");
 
   const admin = await seedAdmin();
-  const categoryIds = await seedCategories();
-  await seedProducts(categoryIds);
-  await seedDemoSales(admin.id);
+
+  const seedDemo = env.SEED_DEMO === "true" || (env.SEED_DEMO === undefined && env.NODE_ENV !== "production");
+
+  if (seedDemo) {
+    const categoryIds = await seedCategories();
+    await seedProducts(categoryIds);
+    await seedDemoSales(admin.id);
+  } else {
+    console.log("  · SEED_DEMO desactivado: se omite el catalogo y las ventas de ejemplo");
+  }
 
   console.log("\nListo.");
   console.log(`  Usuario: ${env.ADMIN_EMAIL}`);
   console.log(`  Clave:   ${env.ADMIN_PASSWORD}\n`);
+
+  if (env.SEED_DEMO === "false") {
+    console.log(`  El usuario admin existente no se modifica: el seed solo lo crea cuando no existe.`);
+    console.log(`  Si cambiaste ADMIN_PASSWORD despues de crearlo, no se aplica.\n`);
+  }
 }
 
 try {

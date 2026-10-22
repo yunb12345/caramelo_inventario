@@ -1,0 +1,64 @@
+# Blueprint de Render: API (Docker) + SPA (static site) + Supabase como base.
+#
+# Pasos:
+#   1. Pushear este repo a GitHub.
+#   2. Render Dashboard -> New -> Blueprint -> elegir el repo.
+#   3. Completar los valores marcados con `sync: false` (secretos).
+#
+# Notas:
+# - Region virginia para quedar cerca de Supabase us-east-1.
+# - autoDeployTrigger: off -> los deploys los dispara GitHub Actions despues
+#   de aplicar las migraciones (ver .github/workflows/deploy.yml).
+# - plan: free sirve para probar, pero duerme a los 15 min y el POS paga el
+#   cold start (~50s). Para uso diario usar `0.5c-512mb`.
+services:
+  - type: web
+    name: caramelo-api
+    runtime: docker
+    region: virginia
+    plan: 0.5c-512mb
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    autoDeployTrigger: "off"
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false # Session pooler de Supabase (5432) con ?sslmode=require
+      - key: JWT_SECRET
+        sync: false
+      - key: JWT_EXPIRES_IN
+        value: 12h
+      - key: CORS_ORIGIN
+        sync: false # https://<nombre-del-static-site>.onrender.com
+      - key: ADMIN_NAME
+        value: Administrador
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: SEED_DEMO
+        value: "false"
+
+  - type: web
+    name: caramelo-web
+    runtime: static
+    buildCommand: pnpm install --frozen-lockfile && pnpm --filter @caramelo/web build
+    staticPublishPath: ./apps/web/dist
+    autoDeployTrigger: "off"
+    envVars:
+      - key: VITE_API_BASE_URL
+        sync: false # https://caramelo-api.onrender.com (sin /api)
+    routes:
+      # Fallback de SPA: cualquier ruta sin archivo propio devuelve index.html.
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    headers:
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff

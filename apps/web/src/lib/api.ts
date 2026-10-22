@@ -2,6 +2,12 @@ import type { ApiErrorBody } from "@caramelo/shared";
 
 const TOKEN_KEY = "caramelo.token";
 
+/**
+ * URL base de la API sin el sufijo /api.
+ * Vacio = mismo origen (proxy de Vite en desarrollo o nginx en produccion).
+ */
+export const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/+$/, "");
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -32,7 +38,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
   if (token) headers.set("Authorization", `Bearer ${token}`);
 
-  const response = await fetch(`/api${path}`, { ...options, headers });
+  const response = await fetch(`${API_BASE}/api${path}`, { ...options, headers });
 
   if (response.status === 401 && !path.startsWith("/auth/login")) {
     setToken(null);
