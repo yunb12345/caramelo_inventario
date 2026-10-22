@@ -16,7 +16,7 @@ services:
     name: caramelo-api
     runtime: docker
     region: virginia
-    plan: 0.5c-512mb
+    plan: free
     dockerfilePath: ./apps/api/Dockerfile
     dockerContext: .
     healthCheckPath: /api/health
