@@ -28,7 +28,7 @@ caramelo_inventario/
 │       └── Dockerfile          build + nginx (Docker local o VPS)
 ├── packages/
 │   └── shared/         esquemas Zod y tipos DTO compartidos
-├── scripts/            backup y restore de PostgreSQL
+├── scripts/            check-db, backup y restore de PostgreSQL
 ├── .github/workflows/  CI, deploy, seed y backup programado
 ├── docker-compose.prod.yml
 └── render.yaml         blueprint de Render
@@ -83,6 +83,7 @@ Por defecto: `admin@caramelo.local` / `caramelo123`.
 | `pnpm db:migrate` | Aplica migraciones pendientes |
 | `pnpm db:push` | Sincroniza el schema sin migracion (solo desarrollo) |
 | `pnpm db:seed` | Carga usuario admin y datos demo |
+| `pnpm db:check` | Verifica la conexion a la base e imprime el error real si falla |
 | `pnpm db:studio` | Abre Drizzle Studio |
 | `pnpm backup` | `pg_dump` de `DATABASE_URL` en `backups/` |
 | `pnpm restore` | Restaura un `.dump` (pide confirmacion) |
@@ -91,20 +92,23 @@ Por defecto: `admin@caramelo.local` / `caramelo123`.
 
 No hace falta instalar nada: el proyecto usa la libreria `pg` contra el connection string de Supabase.
 
-1. Crear un proyecto en [supabase.com](https://supabase.com) (elegir region `sa-east-1` para Argentina).
+1. Crear un proyecto en [supabase.com](https://supabase.com). Elegir la region pensando donde va a correr la API: `us-east-1` si deployas en Render `virginia`.
 2. Ir a **Project Settings → Database → Connection string**.
-3. Copiar la cadena **Session pooler** (puerto `5432`).
+3. Copiar la cadena **Session pooler** (puerto `5432`) y agregarle `?sslmode=no-verify` al final.
+   - **No usar** la *Direct connection* (`db.<project-ref>.supabase.co`): es IPv6-only, y GitHub Actions y Render no tienen IPv6 saliente. Conecta desde tu casa, pero falla en el deploy.
    - **No usar** el *Transaction pooler* (puerto `6543`): las ventas y ajustes de stock usan transacciones SQL y ese modo no las soporta.
-   - Si el plan permite *Direct connection*, tambien sirve.
+   - El usuario del pooler tiene la forma `postgres.<project-ref>`, no `postgres`.
+   - `sslmode=no-verify` es necesario porque en `pg` 8.x, `require`/`prefer` se comportan como `verify-full` y el certificado del pooler no valida (`SELF_SIGNED_CERT_IN_CHAIN`). Sin `sslmode`, la conexion va en texto plano.
 4. Pegarla en `apps/api/.env`:
 
 ```env
-DATABASE_URL="postgresql://postgres.xxxxxxxx:TU_PASSWORD@aws-0-sa-east-1.pooler.supabase.com:5432/postgres?sslmode=require"
+DATABASE_URL="postgresql://postgres.<project-ref>:TU_PASSWORD@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=no-verify"
 ```
 
-5. Aplicar el esquema y crear el admin:
+5. Verificar la conexion, aplicar el esquema y crear el admin:
 
 ```bash
+pnpm db:check
 pnpm db:migrate
 pnpm db:seed
 ```
@@ -113,7 +117,8 @@ pnpm db:seed
 
 Notas:
 
-- Si la contrasena tiene caracteres especiales (`@`, `#`, `%`), codificala en URL (`@` → `%40`).
+- Si la contrasena tiene caracteres especiales (`@`, `#`, `%`, `:`, `/`, `?`), codificala en URL (`@` → `%40`, `#` → `%23`, `%` → `%25`).
+- `pnpm db:check` imprime el error real de conexion con una pista. Conviene correrlo antes de `db:migrate` porque `drizzle-kit` oculta ese mensaje cuando no hay TTY (por ejemplo en CI).
 - El seed crea el usuario usando `ADMIN_EMAIL` y `ADMIN_PASSWORD` del `.env`.
 - La API se conecta con un rol de base de datos, no con la API REST de Supabase: **RLS no interviene**. La seguridad la resuelve el JWT de la aplicacion.
 - Los proyectos gratuitos de Supabase se pausan por inactividad; se reactivan desde el panel.
@@ -134,8 +139,13 @@ GitHub Actions (push a main)
 ### 1. Base de datos
 
 1. Crear el proyecto en Supabase con region `us-east-1`.
-2. Copiar la cadena **Session pooler** (puerto `5432`) y agregarle `?sslmode=require`.
-   No usar el *Transaction pooler* (`6543`): las ventas usan transacciones SQL.
+2. Copiar la cadena **Session pooler** y dejarla así:
+
+```env
+DATABASE_URL="postgresql://postgres.<project-ref>:TU_PASSWORD@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=no-verify"
+```
+
+Dos cosas que no se negocian: **no** la *Direct connection* (`db.<ref>.supabase.co`, que es IPv6-only y no conecta desde GitHub ni Render) y **no** el puerto `6543` (*Transaction pooler*, que rompe las transacciones de venta).
 
 ### 2. Secretos en GitHub
 
@@ -191,7 +201,9 @@ El seed **no** corre en cada deploy (si el usuario ya existe, no lo toca). Se ej
 git push origin main
 ```
 
-CI corre typecheck y build en cada pull request. Al mergear en `main`, el workflow de Deploy repite la validación, aplica las migraciones y recién ahí dispara los hooks de Render. Si algo falla antes, no se deploya.
+CI corre typecheck y build en cada pull request. Al mergear en `main`, el workflow de Deploy repite la validación, verifica la conexión a la base, aplica las migraciones y recién ahí dispara los hooks de Render. Si algo falla antes, no se deploya.
+
+La verificación de conexión (`scripts/check-db.mjs`) existe porque `drizzle-kit migrate` no muestra el error cuando corre sin TTY: el spinner borra la línea y solo queda `Exit status 1`. Ese chequeo imprime el código y el mensaje.
 
 ### 6. Backups
 
@@ -201,6 +213,8 @@ DATABASE_URL="postgresql://..." pnpm run restore backups/caramelo-<fecha>.dump
 ```
 
 El workflow `Backup base de datos` corre todos los días a las 03:00 UTC y deja el dump como artifact por 30 días. **Los proyectos gratuitos de Supabase no tienen backups automáticos.**
+
+Los scripts de backup/restore (y el `psql` del workflow) traducen `sslmode=no-verify` a `sslmode=require`: `no-verify` es propio de `pg` en Node y `pg_dump`/`pg_restore`/`psql` usan libpq, donde `require` ya significa "cifrar sin verificar el certificado".
 
 ### Alternativa: una sola maquina con Docker
 

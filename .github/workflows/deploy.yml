@@ -57,14 +57,10 @@ jobs:
       - name: Instalar dependencias
         run: pnpm install --frozen-lockfile
 
-      - name: Verificar secreto
+      - name: Verificar conexion a la base
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: |
-          if [ -z "$DATABASE_URL" ]; then
-            echo "Falta el secreto DATABASE_URL (Settings -> Secrets and variables -> Actions)." >&2
-            exit 1
-          fi
+        run: node scripts/check-db.mjs
 
       - name: Aplicar migraciones
         env:

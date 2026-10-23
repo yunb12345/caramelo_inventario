@@ -24,8 +24,11 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      # Session pooler de Supabase (5432) + ?sslmode=no-verify.
+      # No usar la Direct connection (db.<ref>.supabase.co): es IPv6-only y
+      # Render no la alcanza.
       - key: DATABASE_URL
-        sync: false # Session pooler de Supabase (5432) con ?sslmode=require
+        sync: false
       - key: JWT_SECRET
         sync: false
       - key: JWT_EXPIRES_IN

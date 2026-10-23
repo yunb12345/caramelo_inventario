@@ -39,12 +39,15 @@ if [[ "$ANSWER" != "confirmar" ]]; then
   exit 1
 fi
 
+# Mismo motivo que en backup-db.sh: libpq no entiende `sslmode=no-verify`.
+PG_URL="${DATABASE_URL//sslmode=no-verify/sslmode=require}"
+
 pg_restore \
   --clean \
   --if-exists \
   --no-owner \
   --no-privileges \
-  --dbname "$DATABASE_URL" \
+  --dbname "$PG_URL" \
   --verbose \
   "$FILE"
 

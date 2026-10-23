@@ -5,10 +5,12 @@
 # Uso:
 #   DATABASE_URL="postgresql://..." ./scripts/backup-db.sh [directorio] [dias-de-retencion]
 #
-# Requiere pg_dump 17 o superior en el PATH. Si no lo tenes instalado, se puede
-# correr con Docker:
-#   docker run --rm -e DATABASE_URL -v "$PWD/backups:/backups" postgres:17-alpine \
-#     sh -c 'pg_dump --format=custom --no-owner --no-privileges --file /backups/manual.dump "$DATABASE_URL"'
+# Requiere pg_dump 17 o superior en el PATH.
+# Si preferis Docker, pasale la URL con sslmode=require (libpq no entiende
+# no-verify) y monta la carpeta de salida:
+#   docker run --rm -e PG_URL="postgresql://...:5432/postgres?sslmode=require" \
+#     -v "$PWD/backups:/backups" postgres:17-alpine \
+#     sh -c 'pg_dump --format=custom --no-owner --no-privileges --file /backups/manual.dump "$PG_URL"'
 #
 # Nota: los proyectos gratuitos de Supabase no tienen backups automaticos.
 
@@ -28,6 +30,11 @@ if ! command -v pg_dump >/dev/null 2>&1; then
   exit 1
 fi
 
+# pg_dump usa libpq, que no conoce `sslmode=no-verify` (extension de
+# node-postgres). Para libpq, `require` ya significa "cifrar sin verificar
+# el certificado", que es justo lo que necesitamos con el pooler de Supabase.
+PG_URL="${DATABASE_URL//sslmode=no-verify/sslmode=require}"
+
 mkdir -p "$BACKUP_DIR"
 BACKUP_DIR="$(cd "$BACKUP_DIR" && pwd)"
 
@@ -40,7 +47,7 @@ pg_dump \
   --no-owner \
   --no-privileges \
   --file "$FILE" \
-  "$DATABASE_URL"
+  "$PG_URL"
 
 SIZE="$(du -h "$FILE" | cut -f1)"
 echo "OK: $FILE ($SIZE)"

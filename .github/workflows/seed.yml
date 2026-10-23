@@ -35,6 +35,11 @@ jobs:
       - name: Instalar dependencias
         run: pnpm install --frozen-lockfile
 
+      - name: Verificar conexion a la base
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: node scripts/check-db.mjs
+
       - name: Sembrar base
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}

@@ -29,7 +29,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y postgresql-client-17
 
-      - name: Generar backup
+      - name: Verificar conexion
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
@@ -37,7 +37,15 @@ jobs:
             echo "Falta el secreto DATABASE_URL." >&2
             exit 1
           fi
-          bash scripts/backup-db.sh backups 0
+          # libpq no entiende sslmode=no-verify (es de node-postgres);
+          # para libpq, require ya cifra sin verificar el certificado.
+          PG_URL="${DATABASE_URL//sslmode=no-verify/sslmode=require}"
+          psql "$PG_URL" -v ON_ERROR_STOP=1 -c "select current_database() as db, version() as server"
+
+      - name: Generar backup
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: bash scripts/backup-db.sh backups 0
 
       - name: Subir artifact
         uses: actions/upload-artifact@v4

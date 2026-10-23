@@ -20,6 +20,7 @@
     "restore": "bash scripts/restore-db.sh",
     "db:generate": "pnpm --filter @caramelo/api db:generate",
     "db:migrate": "pnpm --filter @caramelo/api db:migrate",
+    "db:check": "node --env-file-if-exists=apps/api/.env scripts/check-db.mjs",
     "db:push": "pnpm --filter @caramelo/api db:push",
     "db:seed": "pnpm --filter @caramelo/api db:seed",
     "db:studio": "pnpm --filter @caramelo/api db:studio"
